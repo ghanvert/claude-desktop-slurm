@@ -18,6 +18,10 @@ later processes of the daemon stay in that container.
 | `slurm` | One `sbatch` job (`claude-desktop`) | The host is a Slurm node and work outside Slurm is not allowed |
 | `systemd` | One transient user scope (`claude-desktop-*.scope`) with `MemoryMax` / `CPUQuota` | The host has no Slurm, but has systemd with cgroup v2 |
 
+## Why?
+
+Most systems kill jobs outside of Slurm. This is not desired when running Claude sessions through Claude Desktop.
+
 ## Requirements
 
 Both methods:
