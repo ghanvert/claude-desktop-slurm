@@ -1,0 +1,14 @@
+# ~/.config/claude-desktop-slurm/slurm.conf
+# Read by claude-desktop-slurm each time it starts a daemon. A change applies to
+# the next daemon, not to the job that runs now. Leave a value empty to use the
+# cluster's default.
+
+CPUS=8              # --cpus-per-task, shared by all desktop sessions
+MEM=32G             # --mem
+GPUS=0              # --gres=gpu:N (0 = no GPU)
+TIME=               # --time, e.g. 14-00:00:00; empty = partition default
+ACCOUNT=            # --account
+QOS=                # --qos
+PARTITION=          # --partition
+JOB_NAME=claude-desktop
+START_TIMEOUT=120   # seconds to wait for the job to start the daemon

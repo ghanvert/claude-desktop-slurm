@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Start the Claude desktop SSH daemon inside a systemd user scope.
+#
+#   claude-desktop-systemd '<command>'
+#
+# The hook in ~/.bashrc calls this when ssh runs the daemon start command
+# (`server --stop ... && server --serve --socket <sock> ...`). systemd-run puts
+# the command in a new transient scope with memory and CPU limits, then runs it
+# in the foreground, so ssh gets its output and exit status unchanged. The
+# daemon forks into the background but stays in the scope's cgroup, and so do
+# its children (Claude, its tools, the terminal). The scope ends when its last
+# process exits. Needs no root: see the README for the host requirements.
+#
+# Settings come from ~/.config/claude-desktop-slurm/systemd.conf (see
+# systemd.conf.example).
+set -euo pipefail
+
+[ $# -eq 1 ] || { echo "Usage: $(basename "$0") '<daemon start command>'" >&2; exit 2; }
+
+conf=${CLAUDE_DESKTOP_CONF:-$HOME/.config/claude-desktop-slurm/systemd.conf}
+# shellcheck source=/dev/null
+[ ! -f "$conf" ] || . "$conf"
+
+# a non-interactive ssh command may lack these; systemd-run --user needs the bus
+export XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+# stops the ~/.bashrc hook from catching the command again inside the scope
+export CLAUDE_DESKTOP_CONFINED=systemd
+
+props=(-p MemoryMax="${MEM:-32G}")
+[ -z "${CPUS:-}" ] || props+=(-p CPUQuota="$((CPUS * 100))%")
+[ -z "${TASKS_MAX:-}" ] || props+=(-p TasksMax="$TASKS_MAX")
+
+exec systemd-run --user --scope --quiet --collect \
+    --unit="${UNIT_PREFIX:-claude-desktop}-$(date +%Y%m%d-%H%M%S)-$$" \
+    "${props[@]}" bash -c "$1"

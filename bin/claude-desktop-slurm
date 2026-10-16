@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# Start the Claude desktop SSH daemon inside a Slurm batch job.
+#
+#   claude-desktop-slurm '<command>'
+#
+# The hook in ~/.bashrc calls this when ssh runs the daemon start command
+# (`server --stop ... && server --serve --socket <sock> ...`). The job runs that
+# command; the daemon forks into the background but stays in the job's cgroup,
+# and so do its children (Claude, its tools, the terminal). The job then holds
+# until the daemon exits. This side waits for the command to return, prints its
+# output and exits with its status, as the app expects from ssh.
+#
+# Settings come from ~/.config/claude-desktop-slurm/slurm.conf (see
+# slurm.conf.example). Job logs go to ~/.claude/remote/slurm.
+set -euo pipefail
+
+# Internal: the batch job.
+if [ "${1:-}" = --_job ]; then
+    cmd=$2 out=$3 status=$4 lock=$5
+    rc=0
+    bash -c "$cmd" >"$out" 2>&1 || rc=$?
+    # the daemon writes its lock before the start command returns; give it a moment
+    pid=""
+    for _ in $(seq 10); do
+        pid=$(jq -r '.pid // empty' "$lock" 2>/dev/null || true)
+        [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && break
+        pid=""
+        sleep 1
+    done
+    echo "$rc" >"$status"
+    [ "$rc" -eq 0 ] || exit "$rc"
+    [ -n "$pid" ] || { echo "No running daemon in $lock." >&2; exit 1; }
+    echo "Daemon $pid running."
+    while kill -0 "$pid" 2>/dev/null; do sleep 30; done
+    echo "Daemon $pid exited."
+    exit 0
+fi
+
+[ $# -eq 1 ] || { echo "Usage: $(basename "$0") '<daemon start command>'" >&2; exit 2; }
+cmd=$1
+sock=$(sed -n "s/.*'--serve' '--socket' '\([^']*\)'.*/\1/p" <<<"$cmd")
+[ -n "$sock" ] || { echo "claude-desktop-slurm: no --serve --socket in: $cmd" >&2; exit 2; }
+lock=$(dirname "$sock")/daemon.lock
+
+conf=${CLAUDE_DESKTOP_CONF:-$HOME/.config/claude-desktop-slurm/slurm.conf}
+# shellcheck source=/dev/null
+[ ! -f "$conf" ] || . "$conf"
+
+dir=$HOME/.claude/remote/slurm
+mkdir -p "$dir"
+tag=$(date +%Y%m%d-%H%M%S)-$$
+out=$dir/$tag.out status=$dir/$tag.status
+
+args=(--parsable --job-name="${JOB_NAME:-claude-desktop}" --nodes=1 -n1
+      --cpus-per-task="${CPUS:-8}" --mem="${MEM:-32G}" --output="$dir/%j.log")
+[ -z "${ACCOUNT:-}" ] || args+=(--account="$ACCOUNT")
+[ -z "${QOS:-}" ] || args+=(--qos="$QOS")
+[ -z "${PARTITION:-}" ] || args+=(--partition="$PARTITION")
+[ -z "${TIME:-}" ] || args+=(--time="$TIME")
+[ "${GPUS:-0}" -eq 0 ] || args+=(--gres=gpu:"$GPUS")
+
+# a fresh job, not a step of a job this shell may be in; the marker stops the
+# ~/.bashrc hook from catching the command again inside the job
+for v in $(compgen -A variable SLURM_); do unset "$v"; done
+export CLAUDE_DESKTOP_CONFINED=slurm
+job=$(sbatch "${args[@]}" "$(realpath "$0")" --_job "$cmd" "$out" "$status" "$lock")
+
+for _ in $(seq "${START_TIMEOUT:-120}"); do
+    [ -s "$status" ] && break
+    sleep 1
+done
+if [ ! -s "$status" ]; then
+    scancel "$job" 2>/dev/null || true
+    echo "claude-desktop-slurm: job $job did not start the daemon within ${START_TIMEOUT:-120} s." >&2
+    exit 1
+fi
+cat "$out"
+rc=$(cat "$status")
+rm -f "$out" "$status"
+exit "$rc"

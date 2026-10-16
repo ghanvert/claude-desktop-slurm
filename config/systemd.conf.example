@@ -1,0 +1,8 @@
+# ~/.config/claude-desktop-slurm/systemd.conf
+# Read by claude-desktop-systemd each time it starts a daemon. A change applies
+# to the next daemon, not to the scope that runs now.
+
+CPUS=8              # CPUQuota = CPUS x 100% (needs the cpu controller); empty = no CPU limit
+MEM=32G             # MemoryMax (needs the memory controller)
+TASKS_MAX=          # TasksMax, e.g. 4096; empty = systemd default
+UNIT_PREFIX=claude-desktop
